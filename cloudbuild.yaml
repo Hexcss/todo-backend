@@ -1,0 +1,80 @@
+substitutions:
+  # Example substitutions (override per environment)
+  _SERVICE_NAME: "api-template"
+  _REGION: "europe-west1"
+  _REPO_NAME: "api-template"
+  _IMAGE_NAME: "api"
+  _PORT: "3000"
+  _NODE_ENV: "dev" # can be dev, demo, prod
+
+steps:
+  # 🐳 Build container image with env suffix
+  - id: "build"
+    name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "build",
+        "-t",
+        "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_IMAGE_NAME}-${_NODE_ENV}:$COMMIT_SHA",
+        "-t",
+        "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_IMAGE_NAME}-${_NODE_ENV}:latest",
+        "."
+      ]
+    waitFor: ["-"]
+
+  # ⚡ Pre-pull Cloud SDK slim image
+  - id: "pre-pull-cloudsdk"
+    name: "gcr.io/cloud-builders/docker"
+    args: ["pull", "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"]
+    waitFor: ["-"]
+
+  # 📦 Push SHA-tagged image
+  - id: "push-sha"
+    name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "push",
+        "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_IMAGE_NAME}-${_NODE_ENV}:$COMMIT_SHA"
+      ]
+    waitFor: ["build"]
+
+  # 📦 Push latest-tagged image
+  - id: "push-latest"
+    name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "push",
+        "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_IMAGE_NAME}-${_NODE_ENV}:latest"
+      ]
+    waitFor: ["build"]
+
+  # 🚀 Deploy to Cloud Run with env suffix
+  - id: "deploy"
+    name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+    entrypoint: gcloud
+    args:
+      [
+        "run",
+        "deploy",
+        "${_SERVICE_NAME}-${_NODE_ENV}",
+        "--image",
+        "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_IMAGE_NAME}-${_NODE_ENV}:$COMMIT_SHA",
+        "--region",
+        "${_REGION}",
+        "--platform",
+        "managed",
+        "--allow-unauthenticated",
+        "--port",
+        "${_PORT}",
+        "--quiet",
+        "--update-env-vars",
+        "NODE_ENV=${_NODE_ENV}"
+      ]
+    waitFor: ["push-sha", "push-latest", "pre-pull-cloudsdk"]
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+images:
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_IMAGE_NAME}-${_NODE_ENV}:$COMMIT_SHA"
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO_NAME}/${_IMAGE_NAME}-${_NODE_ENV}:latest"
