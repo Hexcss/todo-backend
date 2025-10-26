@@ -2,14 +2,17 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { envSchema } from './config/env.validation';
 import { AppLogger } from './common/logger/logger.service';
-import { ExampleModule } from './features/example/example.module';
-import { HealthModule } from './features/health/health.module';
+import { HealthModule } from './modules/health/health.module';
+import { TaskModule } from './modules/task/task.module';
+import { UserModule } from './modules/user/user.module';
+import { TagModule } from './modules/tag/tag.module';
+import { ProjectModule } from './modules/project/project.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      ignoreEnvFile: true, // read directly from process.env
+      ignoreEnvFile: true,
       validate: (config: Record<string, unknown>) => {
         const parsed = envSchema.safeParse(config);
         if (!parsed.success) {
@@ -21,8 +24,11 @@ import { HealthModule } from './features/health/health.module';
         return parsed.data;
       },
     }),
-    ExampleModule,
     HealthModule,
+    TaskModule,
+    ProjectModule,
+    UserModule,
+    TagModule,
   ],
   providers: [AppLogger],
   exports: [AppLogger],
