@@ -12,7 +12,7 @@ import { ProjectModule } from './modules/project/project.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      ignoreEnvFile: true,
+      ignoreEnvFile: false,
       validate: (config: Record<string, unknown>) => {
         const parsed = envSchema.safeParse(config);
         if (!parsed.success) {
