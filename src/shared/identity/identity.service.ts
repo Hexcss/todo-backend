@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit, HttpException, HttpStatus } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as admin from 'firebase-admin';
 
@@ -24,11 +24,13 @@ export class IdentityService implements OnModuleInit {
   private app: admin.app.App;
   private auth: admin.auth.Auth;
   private apiKey: string;
+  private projectId: string;
   private sessionCookieName: string;
   private sessionExpiresMs: number;
 
   constructor(private readonly config: ConfigService) {
     this.apiKey = this.config.get<string>('FIREBASE_API_KEY') ?? '';
+    this.projectId = this.config.get<string>('FIREBASE_PROJECT_ID') ?? '';
     this.sessionCookieName = this.config.get<string>('SESSION_COOKIE_NAME') ?? '__session';
     const days = Number(this.config.get<string>('SESSION_EXPIRES_DAYS') ?? '14');
     this.sessionExpiresMs = Math.max(1, days) * 24 * 60 * 60 * 1000;
@@ -52,6 +54,30 @@ export class IdentityService implements OnModuleInit {
     this.auth = admin.auth();
   }
 
+  private mapIdentityRestToHttp(msg: string): number {
+    switch (msg) {
+      case 'EMAIL_EXISTS':
+        return HttpStatus.CONFLICT;
+      case 'OPERATION_NOT_ALLOWED':
+      case 'USER_DISABLED':
+        return HttpStatus.FORBIDDEN;
+      case 'EMAIL_NOT_FOUND':
+        return HttpStatus.NOT_FOUND;
+      case 'INVALID_PASSWORD':
+      case 'WEAK_PASSWORD':
+      case 'MISSING_PASSWORD':
+      case 'INVALID_EMAIL':
+        return HttpStatus.BAD_REQUEST;
+      case 'TOO_MANY_ATTEMPTS_TRY_LATER':
+        return HttpStatus.TOO_MANY_REQUESTS;
+      case 'INVALID_REFRESH_TOKEN':
+      case 'TOKEN_EXPIRED':
+        return HttpStatus.UNAUTHORIZED;
+      default:
+        return HttpStatus.BAD_REQUEST;
+    }
+  }
+
   getSessionCookieName() {
     return this.sessionCookieName;
   }
@@ -61,39 +87,76 @@ export class IdentityService implements OnModuleInit {
   }
 
   async signUpEmailPassword(email: string, password: string, displayName?: string) {
-    const user = await this.auth.createUser({ email, password, displayName, emailVerified: false, disabled: false });
-    return user;
+    try {
+      const user = await this.auth.createUser({ email, password, displayName, emailVerified: false, disabled: false });
+      return user;
+    } catch (e: any) {
+      const code: string = e?.code || 'auth/unknown';
+      const msg: string = e?.message || 'Sign up failed';
+      let status = HttpStatus.BAD_REQUEST;
+      if (code === 'auth/email-already-exists' || code === 'auth/uid-already-exists') status = HttpStatus.CONFLICT;
+      else if (code === 'auth/operation-not-allowed' || code === 'auth/insufficient-permission') status = HttpStatus.FORBIDDEN;
+      throw new HttpException(msg, status);
+    }
   }
 
   async signInEmailPassword(email: string, password: string) {
-    const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${this.apiKey}`, {
+    const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${this.apiKey}`;
+    const body: Record<string, any> = { email, password, returnSecureToken: true };
+    if (this.projectId) body.targetProjectId = this.projectId;
+
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, returnSecureToken: true }),
+      body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error('auth/sign-in-failed');
-    const data = (await res.json()) as SignInPasswordResponse;
-    const sessionCookie = await this.auth.createSessionCookie(data.idToken, { expiresIn: this.sessionExpiresMs });
+
+    const data = (await res.json().catch(() => ({}))) as
+      | SignInPasswordResponse
+      | { error?: { code?: number; message?: string } };
+
+    if (!res.ok) {
+      const msg = (data as any)?.error?.message || 'UNKNOWN_ERROR';
+      const status = this.mapIdentityRestToHttp(msg);
+      throw new HttpException(msg, status);
+    }
+
+    const ok = data as SignInPasswordResponse;
+    const sessionCookie = await this.auth.createSessionCookie(ok.idToken, { expiresIn: this.sessionExpiresMs });
     const decoded = await this.verifySessionCookie(sessionCookie);
     return {
       uid: decoded.uid,
       email: decoded.email ?? email,
-      idToken: data.idToken,
-      refreshToken: data.refreshToken,
+      idToken: ok.idToken,
+      refreshToken: ok.refreshToken,
       sessionCookie,
       expiresIn: this.sessionExpiresMs,
     };
   }
 
   async refreshIdToken(refreshToken: string) {
-    const res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${this.apiKey}`, {
+    const url = `https://securetoken.googleapis.com/v1/token?key=${this.apiKey}`;
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }),
     });
-    if (!res.ok) throw new Error('auth/refresh-failed');
-    const data = (await res.json()) as RefreshResponse;
-    return { idToken: data.id_token, refreshToken: data.refresh_token, expiresIn: Number(data.expires_in) * 1000 };
+
+    const data = (await res.json().catch(() => ({}))) as
+      | RefreshResponse
+      | { error?: { message?: string } };
+
+    if (!res.ok) {
+      const msg = (data as any)?.error?.message || 'UNKNOWN_ERROR';
+      const status = this.mapIdentityRestToHttp(msg);
+      throw new HttpException(msg, status);
+    }
+
+    return {
+      idToken: (data as RefreshResponse).id_token,
+      refreshToken: (data as RefreshResponse).refresh_token,
+      expiresIn: Number((data as RefreshResponse).expires_in) * 1000,
+    };
   }
 
   async verifyIdToken(idToken: string, checkRevoked = true) {
@@ -125,7 +188,12 @@ export class IdentityService implements OnModuleInit {
     return this.auth.getUserByEmail(email);
   }
 
-  async updateUser(uid: string, data: Partial<Pick<admin.auth.UpdateRequest, 'displayName' | 'photoURL' | 'password' | 'email' | 'emailVerified' | 'disabled'>>) {
+  async updateUser(
+    uid: string,
+    data: Partial<
+      Pick<admin.auth.UpdateRequest, 'displayName' | 'photoURL' | 'password' | 'email' | 'emailVerified' | 'disabled'>
+    >,
+  ) {
     return this.auth.updateUser(uid, data);
   }
 

@@ -1,26 +1,32 @@
 import { Injectable } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UserEntity } from './entities/user.entity';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { FirestoreService } from 'src/shared/firestore/firestore.service';
 
 @Injectable()
 export class UserService {
-  create(createUserDto: CreateUserDto) {
-    return 'This action adds a new user';
+  constructor(private readonly fs: FirestoreService) {}
+
+  async getMe(uid: string): Promise<UserEntity | null> {
+    return this.fs.getDoc<UserEntity>(this.fs.userDoc(uid));
   }
 
-  findAll() {
-    return `This action returns all user`;
+  async createMe(uid: string, dto: CreateUserDto): Promise<UserEntity | null> {
+    await this.fs.setDoc(this.fs.userDoc(uid), {
+      email: dto.email,
+      name: dto.name ?? null,
+      image: dto.image ?? null,
+    });
+    return this.getMe(uid);
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} user`;
+  async updateMe(uid: string, dto: UpdateUserDto): Promise<UserEntity | null> {
+    await this.fs.updateDoc(this.fs.userDoc(uid), { ...dto });
+    return this.getMe(uid);
   }
 
-  update(id: number, updateUserDto: UpdateUserDto) {
-    return `This action updates a #${id} user`;
-  }
-
-  remove(id: number) {
-    return `This action removes a #${id} user`;
+  async deleteMe(uid: string, soft = true): Promise<void> {
+    await this.fs.cascadeDeleteUser(uid, soft);
   }
 }

@@ -7,6 +7,9 @@ import { TaskModule } from './modules/task/task.module';
 import { UserModule } from './modules/user/user.module';
 import { TagModule } from './modules/tag/tag.module';
 import { ProjectModule } from './modules/project/project.module';
+import { FirestoreModule } from './shared/firestore/firestore.module';
+import { IdentityModule } from './shared/identity/identity.module';
+import { AuthModule } from './modules/auth/auth.module';
 
 @Module({
   imports: [
@@ -24,6 +27,9 @@ import { ProjectModule } from './modules/project/project.module';
         return parsed.data;
       },
     }),
+    AuthModule,
+    FirestoreModule,
+    IdentityModule,
     HealthModule,
     TaskModule,
     ProjectModule,

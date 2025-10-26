@@ -1,8 +1,8 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as admin from 'firebase-admin';
+import { Firestore } from '@google-cloud/firestore';
 import { QueryOptions, UpsertOptions, WhereTuple } from 'src/common/types/firestore.types';
-
 
 @Injectable()
 export class FirestoreService implements OnModuleInit {
@@ -11,22 +11,26 @@ export class FirestoreService implements OnModuleInit {
 
   constructor(private readonly config: ConfigService) {}
 
-  onModuleInit() {
+  async onModuleInit() {
+    const projectId = this.config.get<string>('FIREBASE_PROJECT_ID')!;
+    const clientEmail = this.config.get<string>('FIREBASE_CLIENT_EMAIL')!;
+    const privateKey = this.config.get<string>('FIREBASE_PRIVATE_KEY')!;
+    const databaseId = this.config.get<string>('FIRESTORE_DATABASE_ID')!;
+
     if (admin.apps.length === 0) {
-      const projectId = this.config.get<string>('FIREBASE_PROJECT_ID');
-      const clientEmail = this.config.get<string>('FIREBASE_CLIENT_EMAIL');
-      const privateKey = this.config.get<string>('FIREBASE_PRIVATE_KEY');
-      if (projectId && clientEmail && privateKey) {
-        this.app = admin.initializeApp({
-          credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
-        });
-      } else {
-        this.app = admin.initializeApp();
-      }
+      this.app = admin.initializeApp({
+        credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
+      });
     } else {
       this.app = admin.app();
     }
-    this.db = admin.firestore();
+
+    this.db = new Firestore({
+      projectId,
+      databaseId,
+      credentials: { client_email: clientEmail, private_key: privateKey },
+    }) as unknown as FirebaseFirestore.Firestore;
+
     this.db.settings({ ignoreUndefinedProperties: true });
   }
 
@@ -113,11 +117,11 @@ export class FirestoreService implements OnModuleInit {
   }
 
   async runTransaction<T>(fn: (tx: FirebaseFirestore.Transaction, db: FirebaseFirestore.Firestore) => Promise<T>) {
-    return this.db.runTransaction(async tx => fn(tx, this.db));
+    return (this.db as any).runTransaction(async (tx: FirebaseFirestore.Transaction) => fn(tx, this.db));
   }
 
   async runBatch(fn: (batch: FirebaseFirestore.WriteBatch, db: FirebaseFirestore.Firestore) => Promise<void>) {
-    const batch = this.db.batch();
+    const batch = (this.db as any).batch() as FirebaseFirestore.WriteBatch;
     await fn(batch, this.db);
     await batch.commit();
   }

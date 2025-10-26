@@ -10,6 +10,10 @@ export const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => (typeof v === 'string' ? v.replace(/\\n/g, '\n') : v)),
+  FIREBASE_API_KEY: z.string().optional(),
+  FIRESTORE_DATABASE_ID: z.string().default('todo'),
+  SESSION_COOKIE_NAME: z.string().default('__session'),
+  SESSION_EXPIRES_DAYS: z.string().default('14'),
 });
 
 export type EnvVars = z.infer<typeof envSchema>;

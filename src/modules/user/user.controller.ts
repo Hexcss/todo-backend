@@ -1,34 +1,42 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Put, Post, Query, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { IdentityGuard } from 'src/shared/identity/identity.guard';
+import { AuthUser } from 'src/shared/identity/auth-user.decorator';
 import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UserEntity } from './entities/user.entity';
 import { UpdateUserDto } from './dto/update-user.dto';
 
-@Controller('user')
+@ApiTags('Users')
+@ApiBearerAuth()
+@UseGuards(IdentityGuard)
+@Controller('users')
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(private readonly users: UserService) {}
 
-  @Post()
-  create(@Body() createUserDto: CreateUserDto) {
-    return this.userService.create(createUserDto);
+  @Get('me')
+  @ApiOkResponse({ type: UserEntity })
+  async me(@AuthUser() user: any) {
+    return this.users.getMe(user.uid);
   }
 
-  @Get()
-  findAll() {
-    return this.userService.findAll();
+  @Post('me')
+  @ApiOkResponse({ type: UserEntity })
+  async createMe(@AuthUser() user: any, @Body() dto: CreateUserDto) {
+    return this.users.createMe(user.uid, dto);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.userService.findOne(+id);
+  @Put('me')
+  @ApiOkResponse({ type: UserEntity })
+  async updateMe(@AuthUser() user: any, @Body() dto: UpdateUserDto) {
+    return this.users.updateMe(user.uid, dto);
   }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-    return this.userService.update(+id, updateUserDto);
-  }
-
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.userService.remove(+id);
+  @Delete('me')
+  @ApiQuery({ name: 'soft', required: false, type: Boolean })
+  async deleteMe(@AuthUser() user: any, @Query('soft') soft?: string) {
+    const doSoft = soft === undefined ? true : String(soft).toLowerCase() !== 'false';
+    await this.users.deleteMe(user.uid, doSoft);
+    return { ok: true };
   }
 }
